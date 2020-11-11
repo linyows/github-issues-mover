@@ -1,4 +1,4 @@
-<p align="center">
+<p align="center"><br><br><br><br>
 :steam_locomotive:<br>
 <b>GitHub Issue Mover</b>
 </p>
@@ -6,7 +6,7 @@
 <p align="center">
 This is a CLI tool to migrate issues across GitHub and GitHub Enteprise repos.<br>
 In addition to issues, migration also includes labels and milestones.
-</p>
+</p><br><br><br><br>
 
 Installation
 --
