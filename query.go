@@ -27,8 +27,8 @@ type Issue struct {
 	CreatedAt time.Time
 	UpdatedAt time.Time
 	ClosedAt  time.Time
-	State     githubv4.String
-	Number    githubv4.Int
+	State     string
+	Number    int
 	Closed    bool
 	Milestone struct {
 		Number int
@@ -90,6 +90,18 @@ type IssuesQuery struct {
 				EndCursor   githubv4.String
 				HasNextPage bool
 			}
-		} `graphql:"issues(first: 100, after: $cursor)"`
+		} `graphql:"issues(first: 100, after: $cursor, orderBy: {field: CREATED_AT, direction: ASC})"`
+	} `graphql:"repository(owner: $owner, name: $repo)"`
+}
+
+type PullReqeustsQuery struct {
+	Repository struct {
+		PullReqeusts struct {
+			Nodes    []Issue
+			PageInfo struct {
+				EndCursor   githubv4.String
+				HasNextPage bool
+			}
+		} `graphql:"pullRequests(first: 100, after: $cursor, orderBy: {field: CREATED_AT, direction: ASC})"`
 	} `graphql:"repository(owner: $owner, name: $repo)"`
 }

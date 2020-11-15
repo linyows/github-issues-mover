@@ -1,0 +1,8 @@
+user:
+  - wrong: foo-linyows
+    right: linyows
+  - wrong: for-octocat
+    right: octocat
+body:
+  - wrong: github.com/linyows/bar
+    right: ghe.example.com/linyows/bar
