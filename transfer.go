@@ -8,6 +8,7 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/google/go-github/v32/github"
 	"github.com/shurcooL/githubv4"
@@ -38,7 +39,9 @@ type Transfer struct {
 	Labels          []Label
 	Milestones      []Milestone
 	Issues          []Issue
+	Pulls           []Issue
 	ImportRequested []int
+	Replace         *Map
 }
 
 func New(ctx context.Context) (*Transfer, error) {
@@ -78,6 +81,11 @@ func New(ctx context.Context) (*Transfer, error) {
 	s := strings.Split(*srcRepo, "/")
 	d := strings.Split(*dstRepo, "/")
 
+	replace, err := LoadReplacementMap()
+	if err != nil {
+		return nil, err
+	}
+
 	return &Transfer{
 		SRC: &SRC{
 			Owner:    s[0],
@@ -94,7 +102,9 @@ func New(ctx context.Context) (*Transfer, error) {
 		Labels:          nil,
 		Milestones:      nil,
 		Issues:          nil,
+		Pulls:           nil,
 		ImportRequested: nil,
+		Replace:         replace,
 	}, nil
 }
 
@@ -105,7 +115,7 @@ func (t *Transfer) Exec(ctx context.Context) error {
 	if err := t.Do(ctx); err != nil {
 		return err
 	}
-	t.ImportIssueStatus(ctx)
+	//t.ImportIssueStatus(ctx)
 
 	return nil
 }
@@ -120,6 +130,10 @@ func (t *Transfer) Fetch(ctx context.Context) error {
 	}
 
 	if err := t.FetchIssues(ctx); err != nil {
+		return err
+	}
+
+	if err := t.FetchPulls(ctx); err != nil {
 		return err
 	}
 
@@ -201,6 +215,31 @@ func (t *Transfer) FetchIssues(ctx context.Context) error {
 	return nil
 }
 
+func (t *Transfer) FetchPulls(ctx context.Context) error {
+	var pulls []Issue
+	var pq PullReqeustsQuery
+	pv := map[string]interface{}{
+		"owner":  githubv4.String(t.SRC.Owner),
+		"repo":   githubv4.String(t.SRC.Name),
+		"cursor": (*githubv4.String)(nil),
+	}
+	for {
+		err := t.SRC.Client.Query(ctx, &pq, pv)
+		if err != nil {
+			return err
+		}
+		pulls = append(pulls, pq.Repository.PullReqeusts.Nodes...)
+		if !pq.Repository.PullReqeusts.PageInfo.HasNextPage {
+			break
+		}
+		pv["cursor"] = githubv4.NewString(pq.Repository.PullReqeusts.PageInfo.EndCursor)
+	}
+
+	t.Pulls = pulls
+
+	return nil
+}
+
 func (t *Transfer) Do(ctx context.Context) error {
 	if err := t.DoLabels(ctx); err != nil {
 		fmt.Printf("label create error (%s): %#v\n",
@@ -262,46 +301,117 @@ func (t *Transfer) DoMilestones(ctx context.Context) error {
 }
 
 func (t *Transfer) DoIssues(ctx context.Context) error {
-	for _, v := range t.Issues {
-		var labels []string
-		for _, vv := range v.Labels.Nodes {
-			labels = append(labels, vv.Name)
-		}
-		body := bodyPrefix(v.Author.AvatarURL, v.Author.Login) + v.Body
-		var comments []*IssueImportComment
-		for _, vv := range v.Comments.Nodes {
-			comments = append(comments, &IssueImportComment{
-				CreatedAt: &vv.CreatedAt,
-				Body:      bodyPrefix(vv.Author.AvatarURL, vv.Author.Login) + vv.Body,
-			})
-		}
+	lastNumber := t.Issues[len(t.Issues)-1].Number
+	counter := 0
 
-		input := &IssueImportRequest{
-			IssueImport: IssueImport{
-				Title:     v.Title,
-				Body:      body,
-				CreatedAt: &v.CreatedAt,
-				ClosedAt:  &v.ClosedAt,
-				UpdatedAt: &v.UpdatedAt,
-				Closed:    &v.Closed,
-				Labels:    labels,
-			},
-			Comments: comments,
+	for i := 1; i < lastNumber; i++ {
+		v := t.Issues[counter]
+		if i < v.Number {
+			err := t.importIssue(ctx, t.buildImportIssueRequest(ctx, t.findPullRequest(i)))
+			if err != nil {
+				return err
+			}
+			continue
 		}
-		if v.Assignees.TotalCount > 0 && t.existUser(ctx, v.Assignees.Nodes[0].Login) {
-			input.IssueImport.Assignee = &v.Assignees.Nodes[0].Login
-		}
-		if v.Milestone.Number > 0 {
-			input.IssueImport.Milestone = &v.Milestone.Number
-		}
-		got, _, err := ImportIssue(t.DST.Client, ctx, t.DST.Owner, t.DST.Name, input)
+		counter++
+
+		err := t.importIssue(ctx, t.buildImportIssueRequest(ctx, &v))
 		if err != nil {
 			return err
 		}
-		fmt.Printf("requested issue import: %s - %s\n", *got.URL, v.Title)
-		number, _ := strconv.Atoi(path.Base(*got.URL))
-		t.ImportRequested = append(t.ImportRequested, number)
 	}
+
+	return nil
+}
+
+func (t *Transfer) findPullRequest(n int) *Issue {
+	counter := 0
+	found := false
+	for i, v := range t.Pulls {
+		if v.Number == n {
+			counter = i
+			found = true
+			break
+		}
+	}
+	if found == false {
+		return nil
+	}
+
+	return &t.Pulls[counter]
+}
+
+func (t *Transfer) buildImportDummyIssueRequest(tt *time.Time) *IssueImportRequest {
+	closed := true
+	return &IssueImportRequest{
+		IssueImport: IssueImport{
+			Title:     "Dummy",
+			Body:      "This is a dummy to align the issue numbers for move.",
+			CreatedAt: tt,
+			ClosedAt:  tt,
+			UpdatedAt: tt,
+			Closed:    &closed,
+			Labels:    nil,
+		},
+		Comments: nil,
+	}
+}
+
+func (t *Transfer) buildImportIssueRequest(ctx context.Context, v *Issue) *IssueImportRequest {
+	if v == nil {
+		now := time.Now()
+		return t.buildImportDummyIssueRequest(&now)
+	}
+
+	var labels []string
+	for _, vv := range v.Labels.Nodes {
+		labels = append(labels, vv.Name)
+	}
+	body := bodyPrefix(v.Author.AvatarURL, v.Author.Login) + t.replaceBody(v.Body)
+	var comments []*IssueImportComment
+	for _, vv := range v.Comments.Nodes {
+		comments = append(comments, &IssueImportComment{
+			CreatedAt: &vv.CreatedAt,
+			Body:      bodyPrefix(vv.Author.AvatarURL, vv.Author.Login) + t.replaceBody(vv.Body),
+		})
+	}
+
+	input := &IssueImportRequest{
+		IssueImport: IssueImport{
+			Title:     v.Title,
+			Body:      body,
+			CreatedAt: &v.CreatedAt,
+			ClosedAt:  &v.ClosedAt,
+			UpdatedAt: &v.UpdatedAt,
+			Closed:    &v.Closed,
+			Labels:    labels,
+		},
+		Comments: comments,
+	}
+
+	var assigneeName string
+	if v.Assignees.TotalCount > 0 {
+		assigneeName = t.replaceUser(v.Assignees.Nodes[0].Login)
+		if t.existUser(ctx, assigneeName) {
+			input.IssueImport.Assignee = &assigneeName
+		}
+	}
+	if v.Milestone.Number > 0 {
+		input.IssueImport.Milestone = &v.Milestone.Number
+	}
+
+	return input
+}
+
+func (t *Transfer) importIssue(ctx context.Context, input *IssueImportRequest) error {
+	got, _, err := ImportIssue(t.DST.Client, ctx, t.DST.Owner, t.DST.Name, input)
+	if err != nil {
+		return err
+	}
+
+	number, _ := strconv.Atoi(path.Base(*got.URL))
+	fmt.Printf("requested issue import: importID %d - %s\n", number, input.IssueImport.Title)
+	//t.ImportRequested = append(t.ImportRequested, number)
 
 	return nil
 }
@@ -312,6 +422,26 @@ func (t *Transfer) existUser(ctx context.Context, name string) bool {
 		return false
 	}
 	return true
+}
+
+func (t *Transfer) replaceUser(n string) string {
+	if t.Replace != nil && len(t.Replace.User) > 0 {
+		for _, v := range t.Replace.User {
+			if v.Wrong == n {
+				return v.Right
+			}
+		}
+	}
+	return n
+}
+
+func (t *Transfer) replaceBody(b string) string {
+	if t.Replace != nil && len(t.Replace.Body) > 0 {
+		for _, v := range t.Replace.Body {
+			b = strings.ReplaceAll(b, v.Wrong, v.Right)
+		}
+	}
+	return b
 }
 
 func (t *Transfer) ImportIssueStatus(ctx context.Context) {
