@@ -1,3 +1,5 @@
+🏗 You may have to use `ghe-migrator`: https://github.blog/2016-05-16-migrate-your-repositories-using-ghe-migrator/
+
 <p align="center"><br><br><br><br>
 :steam_locomotive:<br>
 <b>GitHub Issues Mover</b>
