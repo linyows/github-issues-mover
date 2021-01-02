@@ -605,7 +605,7 @@ func (t *Transfer) ImportIssueStatus(ctx context.Context) {
 	}
 }
 
-func (t *Transfer) ShowAssignees() {
+func (t *Transfer) ShowAssignees(ctx context.Context) error {
 	if err := t.Fetch(ctx); err != nil {
 		return err
 	}
