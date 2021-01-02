@@ -323,6 +323,21 @@ func (t *Transfer) DoMilestones(ctx context.Context) error {
 }
 
 func (t *Transfer) DoIssues(ctx context.Context) error {
+	if len(t.Issues) == 0 {
+		for _, v := range t.Pulls {
+			var err error
+			if t.IsImport {
+				err = t.importIssue(ctx, t.buildImportIssueRequest(ctx, &v))
+			} else {
+				err = t.createIssueWithComments(ctx, t.buildCreateIssueRequest(ctx, &v))
+			}
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
 	lastNumber := t.Issues[len(t.Issues)-1].Number
 	counter := 0
 
