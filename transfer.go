@@ -341,7 +341,7 @@ func (t *Transfer) DoIssues(ctx context.Context) error {
 	lastNumber := t.Issues[len(t.Issues)-1].Number
 	counter := 0
 
-	for i := 1; i < lastNumber; i++ {
+	for i := 1; i <= lastNumber; i++ {
 		v := t.Issues[counter]
 		if i < v.Number {
 			var err error
