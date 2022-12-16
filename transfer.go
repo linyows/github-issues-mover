@@ -323,6 +323,7 @@ func (t *Transfer) DoMilestones(ctx context.Context) error {
 }
 
 func (t *Transfer) DoIssues(ctx context.Context) error {
+	fmt.Printf("Issues: %+v\n", t.Issues)
 	if len(t.Issues) == 0 {
 		for _, v := range t.Pulls {
 			var err error
@@ -342,7 +343,9 @@ func (t *Transfer) DoIssues(ctx context.Context) error {
 	counter := 0
 
 	for i := 1; i <= lastNumber; i++ {
+		fmt.Printf("Issue %d\n", i)
 		v := t.Issues[counter]
+		fmt.Printf("v# %+v\n", v.Number)
 		if i < v.Number {
 			var err error
 			if t.IsImport {
@@ -451,6 +454,8 @@ func (t *Transfer) buildImportIssueRequest(ctx context.Context, v *Issue) *Issue
 }
 
 func (t *Transfer) importIssue(ctx context.Context, input *IssueImportRequest) error {
+	fmt.Printf("** about to import issue: %+v\n", input)
+	return nil
 	got, _, err := ImportIssue(t.DST.Client, ctx, t.DST.Owner, t.DST.Name, input)
 	if err != nil {
 		return err
