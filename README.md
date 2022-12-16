@@ -25,10 +25,13 @@ Usage
 Example:
 
 ```sh
+$ touch replace.yml
 $ export SRC_TOKEN=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 $ export DST_TOKEN=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 $ github-issues-mover -src=foo/bar -dst=foo/bar -dst-endpoint=https://ghe.yourhost.com
 ```
+
+The file `replace.yml` must exist (though it can be empty), and configures replacements of imported usernames and issue comment bodies. See `replace.example.yml` for an example.
 
 Contribution
 ------------
