@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -323,33 +324,34 @@ func (t *Transfer) DoMilestones(ctx context.Context) error {
 }
 
 func (t *Transfer) DoIssues(ctx context.Context) error {
-	fmt.Printf("Issues: %+v\n", t.Issues)
+	issuesAndPulls := make([]Issue, 0, len(t.Issues)+len(t.Pulls))
+	issuesAndPulls = append(issuesAndPulls, t.Issues...)
+	issuesAndPulls = append(issuesAndPulls, t.Pulls...)
 
-	var lastNumber int
-	if len(t.Issues) > 0 {
-		lastNumber = t.Issues[len(t.Issues)-1].Number
-	}
-	counter := 0
+	sort.Slice(issuesAndPulls, func(i, j int) bool {
+		return issuesAndPulls[i].Number < issuesAndPulls[j].Number
+	})
 
-	for i := 1; i <= lastNumber; i++ {
-		fmt.Printf("Issue %d\n", i)
-		v := t.Issues[counter]
-		fmt.Printf("v# %+v\n", v.Number)
-		if i < v.Number {
-			var err error
+	fmt.Printf("Issues and pulls: %+v\n", issuesAndPulls)
+
+	issueNumber := 1
+
+	for _, v := range issuesAndPulls {
+		var err error
+		// Create dummy issues between issue numbers to maintain alignment
+		for ; issueNumber < v.Number; issueNumber++ {
+			fmt.Printf("\nCreating dummy issue #%d\n", issueNumber)
 			if t.IsImport {
-				err = t.importIssue(ctx, t.buildImportIssueRequest(ctx, t.findPullRequest(i)))
+				err = t.importIssue(ctx, t.buildImportIssueRequest(ctx, nil))
 			} else {
-				err = t.createIssueWithComments(ctx, t.buildCreateIssueRequest(ctx, t.findPullRequest(i)))
+				err = t.createIssueWithComments(ctx, t.buildCreateIssueRequest(ctx, nil))
 			}
 			if err != nil {
 				return err
 			}
-			continue
 		}
-		counter++
-
-		var err error
+		// Create an issue from a real issue or a pull request
+		fmt.Printf("\nCreating issue #%d\n", v.Number)
 		if t.IsImport {
 			err = t.importIssue(ctx, t.buildImportIssueRequest(ctx, &v))
 		} else {
@@ -358,41 +360,9 @@ func (t *Transfer) DoIssues(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
+		issueNumber++
 	}
-
-	for _, v := range t.Pulls {
-		if v.Number <= lastNumber {
-			continue
-		}
-		var err error
-		if t.IsImport {
-			err = t.importIssue(ctx, t.buildImportIssueRequest(ctx, &v))
-		} else {
-			err = t.createIssueWithComments(ctx, t.buildCreateIssueRequest(ctx, &v))
-		}
-		if err != nil {
-			return err
-		}
-	}
-
 	return nil
-}
-
-func (t *Transfer) findPullRequest(n int) *Issue {
-	counter := 0
-	found := false
-	for i, v := range t.Pulls {
-		if v.Number == n {
-			counter = i
-			found = true
-			break
-		}
-	}
-	if found == false {
-		return nil
-	}
-
-	return &t.Pulls[counter]
 }
 
 func (t *Transfer) buildImportDummyIssueRequest(tt *time.Time) *IssueImportRequest {
