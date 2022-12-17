@@ -76,7 +76,7 @@ func New(ctx context.Context) (*Transfer, error) {
 	srcTc := oauth2.NewClient(ctx, srcTs)
 	srcClient := githubv4.NewClient(srcTc)
 	if defaultEndpoint != *srcEndpoint {
-		srcClient = githubv4.NewEnterpriseClient(*srcEndpoint, srcTc)
+		srcClient = githubv4.NewEnterpriseClient(*srcEndpoint + "/api/graphql", srcTc)
 	}
 
 	dstTs := oauth2.StaticTokenSource(
