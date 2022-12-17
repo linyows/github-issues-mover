@@ -324,22 +324,11 @@ func (t *Transfer) DoMilestones(ctx context.Context) error {
 
 func (t *Transfer) DoIssues(ctx context.Context) error {
 	fmt.Printf("Issues: %+v\n", t.Issues)
-	if len(t.Issues) == 0 {
-		for _, v := range t.Pulls {
-			var err error
-			if t.IsImport {
-				err = t.importIssue(ctx, t.buildImportIssueRequest(ctx, &v))
-			} else {
-				err = t.createIssueWithComments(ctx, t.buildCreateIssueRequest(ctx, &v))
-			}
-			if err != nil {
-				return err
-			}
-		}
-		return nil
-	}
 
-	lastNumber := t.Issues[len(t.Issues)-1].Number
+	var lastNumber int
+	if len(t.Issues) > 0 {
+		lastNumber = t.Issues[len(t.Issues)-1].Number
+	}
 	counter := 0
 
 	for i := 1; i <= lastNumber; i++ {
@@ -360,6 +349,21 @@ func (t *Transfer) DoIssues(ctx context.Context) error {
 		}
 		counter++
 
+		var err error
+		if t.IsImport {
+			err = t.importIssue(ctx, t.buildImportIssueRequest(ctx, &v))
+		} else {
+			err = t.createIssueWithComments(ctx, t.buildCreateIssueRequest(ctx, &v))
+		}
+		if err != nil {
+			return err
+		}
+	}
+
+	for _, v := range t.Pulls {
+		if v.Number <= lastNumber {
+			continue
+		}
 		var err error
 		if t.IsImport {
 			err = t.importIssue(ctx, t.buildImportIssueRequest(ctx, &v))
