@@ -46,6 +46,7 @@ type Transfer struct {
 	IsImport        bool
 	SkipLabels      bool
 	SkipMilestones  bool
+	SkipAvatars     bool
 }
 
 type IssueAndCommentsRequest struct {
@@ -62,6 +63,7 @@ func New(ctx context.Context) (*Transfer, error) {
 		isImport       = flag.Bool("import", true, "use issue import api")
 		skipLabels     = flag.Bool("skip-labels", false, "skip create labels")
 		skipMilestones = flag.Bool("skip-milestones", false, "skip create milestones")
+		skipAvatars    = flag.Bool("skip-avatars", false, "skip linking avatars")
 	)
 	flag.Parse()
 
@@ -120,6 +122,7 @@ func New(ctx context.Context) (*Transfer, error) {
 		IsImport:        *isImport,
 		SkipLabels:      *skipLabels,
 		SkipMilestones:  *skipMilestones,
+		SkipAvatars:     *skipAvatars,
 	}, nil
 }
 
@@ -391,12 +394,12 @@ func (t *Transfer) buildImportIssueRequest(ctx context.Context, v *Issue) *Issue
 	for _, vv := range v.Labels.Nodes {
 		labels = append(labels, vv.Name)
 	}
-	body := bodyPrefix(v.Author.AvatarURL, v.Author.Login, nil) + t.replaceBody(v.Body)
+	body := t.bodyPrefix(v.Author.AvatarURL, v.Author.Login, nil) + t.replaceBody(v.Body)
 	var comments []*IssueImportComment
 	for _, vv := range v.Comments.Nodes {
 		comments = append(comments, &IssueImportComment{
 			CreatedAt: &vv.CreatedAt,
-			Body:      bodyPrefix(vv.Author.AvatarURL, vv.Author.Login, nil) + t.replaceBody(vv.Body),
+			Body:      t.bodyPrefix(vv.Author.AvatarURL, vv.Author.Login, nil) + t.replaceBody(vv.Body),
 		})
 	}
 
@@ -467,10 +470,10 @@ func (t *Transfer) buildCreateIssueRequest(ctx context.Context, v *Issue) *Issue
 	for _, vv := range v.Labels.Nodes {
 		labels = append(labels, vv.Name)
 	}
-	body := bodyPrefix(v.Author.AvatarURL, v.Author.Login, &v.CreatedAt) + t.replaceBody(v.Body)
+	body := t.bodyPrefix(v.Author.AvatarURL, v.Author.Login, &v.CreatedAt) + t.replaceBody(v.Body)
 	var comments []*github.IssueComment
 	for _, vv := range v.Comments.Nodes {
-		cBody := bodyPrefix(vv.Author.AvatarURL, vv.Author.Login, &vv.CreatedAt) + t.replaceBody(vv.Body)
+		cBody := t.bodyPrefix(vv.Author.AvatarURL, vv.Author.Login, &vv.CreatedAt) + t.replaceBody(vv.Body)
 		comments = append(comments, &github.IssueComment{
 			CreatedAt: &vv.CreatedAt,
 			Body:      &cBody,
@@ -609,10 +612,15 @@ func (t *Transfer) ShowAssignees(ctx context.Context) error {
 	return nil
 }
 
-func bodyPrefix(avatarURL string, login string, t *time.Time) string {
-	if t == nil {
-		return fmt.Sprintf("<img src=\"%s\" width=\"25\"> <b>%s</b> commented:\n\n", avatarURL, login)
+func (t *Transfer) bodyPrefix(avatarURL string, login string, tm *time.Time) string {
+	var avatarStr string
+	if !t.SkipAvatars {
+		avatarStr = fmt.Sprintf("<img src=\"%s\" width=\"25\"> ", avatarURL)
 	}
-	return fmt.Sprintf("<img src=\"%s\" width=\"25\"> <b>%s</b> commented (%s):\n\n",
-		avatarURL, login, t.Format(time.RFC822))
+
+	if tm == nil {
+		return fmt.Sprintf("%s<b>%s</b> commented:\n\n", avatarStr, login)
+	}
+	return fmt.Sprintf("%s<b>%s</b> commented (%s):\n\n",
+		avatarStr, login, tm.Format(time.RFC822))
 }
