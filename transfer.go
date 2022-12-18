@@ -5,12 +5,11 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"path"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
+	"github.com/alecthomas/repr"
 	"github.com/google/go-github/v32/github"
 	"github.com/shurcooL/githubv4"
 	"golang.org/x/oauth2"
@@ -76,7 +75,7 @@ func New(ctx context.Context) (*Transfer, error) {
 	srcTc := oauth2.NewClient(ctx, srcTs)
 	srcClient := githubv4.NewClient(srcTc)
 	if defaultEndpoint != *srcEndpoint {
-		srcClient = githubv4.NewEnterpriseClient(*srcEndpoint + "/api/graphql", srcTc)
+		srcClient = githubv4.NewEnterpriseClient(*srcEndpoint+"/api/graphql", srcTc)
 	}
 
 	dstTs := oauth2.StaticTokenSource(
@@ -265,27 +264,18 @@ func (t *Transfer) FetchPulls(ctx context.Context) error {
 func (t *Transfer) Do(ctx context.Context) error {
 	if !t.SkipLabels {
 		if err := t.DoLabels(ctx); err != nil {
-			fmt.Printf("label create error (%s): %#v\n",
-				err.(*github.ErrorResponse).Response.Status,
-				err.(*github.ErrorResponse).Message)
-			return err
+			return fmt.Errorf("label create error: %w", err)
 		}
 	}
 
 	if !t.SkipMilestones {
 		if err := t.DoMilestones(ctx); err != nil {
-			fmt.Printf("milestone create error (%s): %#v\n",
-				err.(*github.ErrorResponse).Response.Status,
-				err.(*github.ErrorResponse).Message)
-			return err
+			return fmt.Errorf("milestone create error: %w", err)
 		}
 	}
 
 	if err := t.DoIssues(ctx); err != nil {
-		fmt.Printf("issue create error (%s): %#v\n",
-			err.(*github.ErrorResponse).Response.Status,
-			err.(*github.ErrorResponse).Message)
-		return err
+		return fmt.Errorf("issue create error: %w", err)
 	}
 
 	return nil
@@ -335,7 +325,7 @@ func (t *Transfer) DoIssues(ctx context.Context) error {
 		return issuesAndPulls[i].Number < issuesAndPulls[j].Number
 	})
 
-	fmt.Printf("Issues and pulls: %+v\n", issuesAndPulls)
+	fmt.Printf("Issues and pulls:\n%s\n", repr.String(issuesAndPulls, repr.Indent("  ")))
 
 	issueNumber := 1
 
@@ -343,7 +333,7 @@ func (t *Transfer) DoIssues(ctx context.Context) error {
 		var err error
 		// Create dummy issues between issue numbers to maintain alignment
 		for ; issueNumber < v.Number; issueNumber++ {
-			fmt.Printf("\nCreating dummy issue #%d\n", issueNumber)
+			fmt.Printf("\nCreating issue #%d - Dummy for alignment\n", issueNumber)
 			if t.IsImport {
 				err = t.importIssue(ctx, t.buildImportIssueRequest(ctx, nil))
 			} else {
@@ -354,7 +344,7 @@ func (t *Transfer) DoIssues(ctx context.Context) error {
 			}
 		}
 		// Create an issue from a real issue or a pull request
-		fmt.Printf("\nCreating issue #%d\n", v.Number)
+		fmt.Printf("\nCreating issue #%d - %s\n", v.Number, v.Title)
 		if t.IsImport {
 			err = t.importIssue(ctx, t.buildImportIssueRequest(ctx, &v))
 		} else {
@@ -431,18 +421,45 @@ func (t *Transfer) buildImportIssueRequest(ctx context.Context, v *Issue) *Issue
 }
 
 func (t *Transfer) importIssue(ctx context.Context, input *IssueImportRequest) error {
-	fmt.Printf("** about to import issue: %+v\n", input)
-	return nil
 	got, _, err := ImportIssue(t.DST.Client, ctx, t.DST.Owner, t.DST.Name, input)
 	if err != nil {
 		return err
 	}
 
-	number, _ := strconv.Atoi(path.Base(*got.URL))
-	fmt.Printf("requested issue import: importID %d - %s\n", number, input.IssueImport.Title)
-	//t.ImportRequested = append(t.ImportRequested, number)
+	// Note: if reimplemented, this should create a slice of URLs or IssueImportRequests
+	// to follow up on, instead of import IDs.
+	// number, _ := strconv.Atoi(path.Base(*got.URL))
+	// fmt.Printf("requested issue import: importID %d - %s\n", number, input.IssueImport.Title)
+	// t.ImportRequested = append(t.ImportRequested, number)
 
-	return nil
+	// To ensure issues are created in order, create them synchronously as recommended
+	// by the Import API docs. This is slow, but safe. We poll the endpoint with a
+	// multiplicative delay, but we reset this delay after every issue.
+
+	const maxRetries = 10
+	var delayMs = 1000
+	var delayScale = 1.6
+
+	for i := 0; ; i++ {
+		fmt.Printf("| Import status: %s\n", *got.Status) // would be nicer as a horizontal "..."
+		switch *got.Status {
+		case "pending":
+		case "imported":
+			return nil
+		default:
+			return fmt.Errorf("issue import failed: %s", repr.String(got))
+		}
+		if i >= maxRetries {
+			break
+		}
+		time.Sleep(time.Duration(delayMs) * time.Millisecond)
+		delayMs = int(float64(delayMs) * delayScale)
+		got, _, err = GetImportIssueResponse(t.DST.Client, ctx, *got.URL)
+		if err != nil {
+			return err
+		}
+	}
+	return fmt.Errorf("max retries exceeded: %s", repr.String(got))
 }
 
 func (t *Transfer) buildCreateDummyIssueRequest(tt *time.Time) *IssueAndCommentsRequest {
