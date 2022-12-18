@@ -48,6 +48,7 @@ type Transfer struct {
 	SkipAvatars     bool
 	Sync            bool
 	Debug           bool
+	DryRun          bool
 }
 
 type IssueAndCommentsRequest struct {
@@ -67,6 +68,7 @@ func New(ctx context.Context) (*Transfer, error) {
 		skipAvatars    = flag.Bool("skip-avatars", false, "skip linking avatars")
 		sync           = flag.Bool("sync", false, "create issues synchronously (recommended)")
 		debug          = flag.Bool("debug", false, "debugging output")
+		dryrun         = flag.Bool("dry-run", false, "make no changes")
 	)
 	flag.Parse()
 
@@ -128,6 +130,7 @@ func New(ctx context.Context) (*Transfer, error) {
 		SkipAvatars:     *skipAvatars,
 		Sync:            *sync,
 		Debug:           *debug,
+		DryRun:          *dryrun,
 	}, nil
 }
 
@@ -434,6 +437,9 @@ func (t *Transfer) buildImportIssueRequest(ctx context.Context, v *Issue) *Issue
 }
 
 func (t *Transfer) importIssue(ctx context.Context, input *IssueImportRequest) error {
+	if t.DryRun {
+		return nil
+	}
 	got, _, err := ImportIssue(t.DST.Client, ctx, t.DST.Owner, t.DST.Name, input)
 	if err != nil {
 		return err
