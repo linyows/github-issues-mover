@@ -262,6 +262,9 @@ func (t *Transfer) FetchPulls(ctx context.Context) error {
 		pv["cursor"] = githubv4.NewString(pq.Repository.PullReqeusts.PageInfo.EndCursor)
 	}
 
+	for i := range pulls {
+		pulls[i].Title = "[PR] " + pulls[i].Title
+	}
 	t.Pulls = pulls
 
 	return nil
