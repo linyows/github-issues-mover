@@ -46,6 +46,7 @@ type Transfer struct {
 	SkipLabels      bool
 	SkipMilestones  bool
 	SkipAvatars     bool
+	Sync            bool
 }
 
 type IssueAndCommentsRequest struct {
@@ -63,6 +64,7 @@ func New(ctx context.Context) (*Transfer, error) {
 		skipLabels     = flag.Bool("skip-labels", false, "skip create labels")
 		skipMilestones = flag.Bool("skip-milestones", false, "skip create milestones")
 		skipAvatars    = flag.Bool("skip-avatars", false, "skip linking avatars")
+		sync           = flag.Bool("sync", false, "create issues synchronously (recommended)")
 	)
 	flag.Parse()
 
@@ -122,6 +124,7 @@ func New(ctx context.Context) (*Transfer, error) {
 		SkipLabels:      *skipLabels,
 		SkipMilestones:  *skipMilestones,
 		SkipAvatars:     *skipAvatars,
+		Sync:            *sync,
 	}, nil
 }
 
@@ -331,7 +334,9 @@ func (t *Transfer) DoIssues(ctx context.Context) error {
 
 	for _, v := range issuesAndPulls {
 		var err error
-		// Create dummy issues between issue numbers to maintain alignment
+		// Create dummy issues between issue numbers to maintain alignment.
+		// Note: in asynchronous mode, it may not be necessary to do this, since
+		// issues could be created out of order.
 		for ; issueNumber < v.Number; issueNumber++ {
 			fmt.Printf("\nCreating issue #%d - Dummy for alignment\n", issueNumber)
 			if t.IsImport {
@@ -426,11 +431,14 @@ func (t *Transfer) importIssue(ctx context.Context, input *IssueImportRequest) e
 		return err
 	}
 
-	// Note: if reimplemented, this should create a slice of URLs or IssueImportRequests
-	// to follow up on, instead of import IDs.
-	// number, _ := strconv.Atoi(path.Base(*got.URL))
-	// fmt.Printf("requested issue import: importID %d - %s\n", number, input.IssueImport.Title)
-	// t.ImportRequested = append(t.ImportRequested, number)
+	if !t.Sync {
+		// Note: if following up on asynchronous issues is reimplemented, this should create a
+		// slice of URLs or IssueImportRequests, instead of import IDs.
+		// number, _ := strconv.Atoi(path.Base(*got.URL))
+		// fmt.Printf("requested issue import: importID %d - %s\n", number, input.IssueImport.Title)
+		// t.ImportRequested = append(t.ImportRequested, number)
+		return nil
+	}
 
 	// To ensure issues are created in order, create them synchronously as recommended
 	// by the Import API docs. This is slow, but safe. We poll the endpoint with a
