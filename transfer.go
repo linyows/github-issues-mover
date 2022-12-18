@@ -47,6 +47,7 @@ type Transfer struct {
 	SkipMilestones  bool
 	SkipAvatars     bool
 	Sync            bool
+	Debug           bool
 }
 
 type IssueAndCommentsRequest struct {
@@ -65,6 +66,7 @@ func New(ctx context.Context) (*Transfer, error) {
 		skipMilestones = flag.Bool("skip-milestones", false, "skip create milestones")
 		skipAvatars    = flag.Bool("skip-avatars", false, "skip linking avatars")
 		sync           = flag.Bool("sync", false, "create issues synchronously (recommended)")
+		debug          = flag.Bool("debug", false, "debugging output")
 	)
 	flag.Parse()
 
@@ -125,6 +127,7 @@ func New(ctx context.Context) (*Transfer, error) {
 		SkipMilestones:  *skipMilestones,
 		SkipAvatars:     *skipAvatars,
 		Sync:            *sync,
+		Debug:           *debug,
 	}, nil
 }
 
@@ -328,7 +331,9 @@ func (t *Transfer) DoIssues(ctx context.Context) error {
 		return issuesAndPulls[i].Number < issuesAndPulls[j].Number
 	})
 
-	fmt.Printf("Issues and pulls:\n%s\n", repr.String(issuesAndPulls, repr.Indent("  ")))
+	if t.Debug {
+		fmt.Printf("Issues and pulls:\n%s\n\n", repr.String(issuesAndPulls, repr.Indent("  ")))
+	}
 
 	issueNumber := 1
 
@@ -338,7 +343,7 @@ func (t *Transfer) DoIssues(ctx context.Context) error {
 		// Note: in asynchronous mode, it may not be necessary to do this, since
 		// issues could be created out of order.
 		for ; issueNumber < v.Number; issueNumber++ {
-			fmt.Printf("\nCreating issue #%d - Dummy for alignment\n", issueNumber)
+			fmt.Printf("Creating issue #%d - Dummy for alignment\n", issueNumber)
 			if t.IsImport {
 				err = t.importIssue(ctx, t.buildImportIssueRequest(ctx, nil))
 			} else {
@@ -349,7 +354,7 @@ func (t *Transfer) DoIssues(ctx context.Context) error {
 			}
 		}
 		// Create an issue from a real issue or a pull request
-		fmt.Printf("\nCreating issue #%d - %s\n", v.Number, v.Title)
+		fmt.Printf("Creating issue #%d - %s\n", v.Number, v.Title)
 		if t.IsImport {
 			err = t.importIssue(ctx, t.buildImportIssueRequest(ctx, &v))
 		} else {
