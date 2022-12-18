@@ -349,23 +349,25 @@ func (t *Transfer) DoIssues(ctx context.Context) error {
 		// Note: in asynchronous mode, it may not be necessary to do this, since
 		// issues could be created out of order.
 		for ; issueNumber < v.Number; issueNumber++ {
-			fmt.Printf("Creating issue #%d - Dummy for alignment\n", issueNumber)
+			fmt.Printf("Creating issue #%d - Dummy for alignment ...", issueNumber)
 			if t.IsImport {
 				err = t.importIssue(ctx, t.buildImportIssueRequest(ctx, nil))
 			} else {
 				err = t.createIssueWithComments(ctx, t.buildCreateIssueRequest(ctx, nil))
 			}
+			fmt.Println()
 			if err != nil {
 				return err
 			}
 		}
 		// Create an issue from a real issue or a pull request
-		fmt.Printf("Creating issue #%d - %s\n", v.Number, v.Title)
+		fmt.Printf("Creating issue #%d - %s ...", v.Number, v.Title)
 		if t.IsImport {
 			err = t.importIssue(ctx, t.buildImportIssueRequest(ctx, &v))
 		} else {
 			err = t.createIssueWithComments(ctx, t.buildCreateIssueRequest(ctx, &v))
 		}
+		fmt.Println()
 		if err != nil {
 			return err
 		}
@@ -463,12 +465,14 @@ func (t *Transfer) importIssue(ctx context.Context, input *IssueImportRequest) e
 	var delayScale = 1.6
 
 	for i := 0; ; i++ {
-		fmt.Printf("| Import status: %s\n", *got.Status) // would be nicer as a horizontal "..."
 		switch *got.Status {
 		case "pending":
+			fmt.Printf(".")
 		case "imported":
+			fmt.Printf(" %s", *got.Status)
 			return nil
 		default:
+			fmt.Printf(" %s", *got.Status)
 			return fmt.Errorf("issue import failed: %s", repr.String(got))
 		}
 		if i >= maxRetries {
@@ -481,7 +485,7 @@ func (t *Transfer) importIssue(ctx context.Context, input *IssueImportRequest) e
 			return err
 		}
 	}
-	return fmt.Errorf("max retries exceeded: %s", repr.String(got))
+	return fmt.Errorf("maximum retries exceeded")
 }
 
 func (t *Transfer) buildCreateDummyIssueRequest(tt *time.Time) *IssueAndCommentsRequest {
