@@ -25,10 +25,15 @@ Usage
 Example:
 
 ```sh
+$ touch replace.yml
 $ export SRC_TOKEN=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 $ export DST_TOKEN=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-$ github-issues-mover -src=foo/bar -dst=foo/bar -dst-endpoint=https://ghe.yourhost.com
+$ github-issues-mover -src=foo/bar -dst=foo/bar -dst-endpoint=https://ghe.yourhost.com -sync
 ```
+
+The file `replace.yml` must exist (though it can be empty), and configures replacements of imported usernames and issue comment bodies. See `replace.example.yml` for an example.
+
+It is highly recommended to use the `-sync` flag when using the issue import API (as is the default). That API is asynchronous, so issue creations are queued in the background on GitHub, and without `-sync` issue number ordering can't be guaranteed.
 
 Contribution
 ------------

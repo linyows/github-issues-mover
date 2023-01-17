@@ -93,3 +93,19 @@ func CheckImportIssueStatus(client *github.Client, ctx context.Context, owner, r
 	}
 	return i, resp, nil
 }
+
+// GetImportIssueResponse gets an IssueImportResponse from the provided url. In general, this url
+// comes from a previous IssueImportResponse.URL, usually the one returned by ImportIssue.
+func GetImportIssueResponse(client *github.Client, ctx context.Context, url string) (*IssueImportResponse, *github.Response, error) {
+	req, err := client.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	req.Header.Set("Accept", mediaTypeIssueImportAPI)
+	got := new(IssueImportResponse)
+	resp, err := client.Do(ctx, req, got)
+	if err != nil {
+		return nil, resp, err
+	}
+	return got, resp, err
+}

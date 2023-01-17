@@ -5,11 +5,11 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"path"
-	"strconv"
+	"sort"
 	"strings"
 	"time"
 
+	"github.com/alecthomas/repr"
 	"github.com/google/go-github/v32/github"
 	"github.com/shurcooL/githubv4"
 	"golang.org/x/oauth2"
@@ -45,6 +45,10 @@ type Transfer struct {
 	IsImport        bool
 	SkipLabels      bool
 	SkipMilestones  bool
+	SkipAvatars     bool
+	Sync            bool
+	Debug           bool
+	DryRun          bool
 }
 
 type IssueAndCommentsRequest struct {
@@ -61,6 +65,10 @@ func New(ctx context.Context) (*Transfer, error) {
 		isImport       = flag.Bool("import", true, "use issue import api")
 		skipLabels     = flag.Bool("skip-labels", false, "skip create labels")
 		skipMilestones = flag.Bool("skip-milestones", false, "skip create milestones")
+		skipAvatars    = flag.Bool("skip-avatars", false, "skip linking avatars")
+		sync           = flag.Bool("sync", false, "create issues synchronously (recommended)")
+		debug          = flag.Bool("debug", false, "debugging output")
+		dryrun         = flag.Bool("dry-run", false, "make no changes")
 	)
 	flag.Parse()
 
@@ -73,7 +81,7 @@ func New(ctx context.Context) (*Transfer, error) {
 	srcTc := oauth2.NewClient(ctx, srcTs)
 	srcClient := githubv4.NewClient(srcTc)
 	if defaultEndpoint != *srcEndpoint {
-		srcClient = githubv4.NewEnterpriseClient(*srcEndpoint, srcTc)
+		srcClient = githubv4.NewEnterpriseClient(*srcEndpoint+"/api/graphql", srcTc)
 	}
 
 	dstTs := oauth2.StaticTokenSource(
@@ -119,6 +127,10 @@ func New(ctx context.Context) (*Transfer, error) {
 		IsImport:        *isImport,
 		SkipLabels:      *skipLabels,
 		SkipMilestones:  *skipMilestones,
+		SkipAvatars:     *skipAvatars,
+		Sync:            *sync,
+		Debug:           *debug,
+		DryRun:          *dryrun,
 	}, nil
 }
 
@@ -253,6 +265,9 @@ func (t *Transfer) FetchPulls(ctx context.Context) error {
 		pv["cursor"] = githubv4.NewString(pq.Repository.PullReqeusts.PageInfo.EndCursor)
 	}
 
+	for i := range pulls {
+		pulls[i].Title = "[PR] " + pulls[i].Title
+	}
 	t.Pulls = pulls
 
 	return nil
@@ -261,27 +276,18 @@ func (t *Transfer) FetchPulls(ctx context.Context) error {
 func (t *Transfer) Do(ctx context.Context) error {
 	if !t.SkipLabels {
 		if err := t.DoLabels(ctx); err != nil {
-			fmt.Printf("label create error (%s): %#v\n",
-				err.(*github.ErrorResponse).Response.Status,
-				err.(*github.ErrorResponse).Message)
-			return err
+			return fmt.Errorf("label create error: %w", err)
 		}
 	}
 
 	if !t.SkipMilestones {
 		if err := t.DoMilestones(ctx); err != nil {
-			fmt.Printf("milestone create error (%s): %#v\n",
-				err.(*github.ErrorResponse).Response.Status,
-				err.(*github.ErrorResponse).Message)
-			return err
+			return fmt.Errorf("milestone create error: %w", err)
 		}
 	}
 
 	if err := t.DoIssues(ctx); err != nil {
-		fmt.Printf("issue create error (%s): %#v\n",
-			err.(*github.ErrorResponse).Response.Status,
-			err.(*github.ErrorResponse).Message)
-		return err
+		return fmt.Errorf("issue create error: %w", err)
 	}
 
 	return nil
@@ -323,69 +329,51 @@ func (t *Transfer) DoMilestones(ctx context.Context) error {
 }
 
 func (t *Transfer) DoIssues(ctx context.Context) error {
-	if len(t.Issues) == 0 {
-		for _, v := range t.Pulls {
-			var err error
-			if t.IsImport {
-				err = t.importIssue(ctx, t.buildImportIssueRequest(ctx, &v))
-			} else {
-				err = t.createIssueWithComments(ctx, t.buildCreateIssueRequest(ctx, &v))
-			}
-			if err != nil {
-				return err
-			}
-		}
-		return nil
+	issuesAndPulls := make([]Issue, 0, len(t.Issues)+len(t.Pulls))
+	issuesAndPulls = append(issuesAndPulls, t.Issues...)
+	issuesAndPulls = append(issuesAndPulls, t.Pulls...)
+
+	sort.Slice(issuesAndPulls, func(i, j int) bool {
+		return issuesAndPulls[i].Number < issuesAndPulls[j].Number
+	})
+
+	if t.Debug {
+		fmt.Printf("Issues and pulls:\n%s\n\n", repr.String(issuesAndPulls, repr.Indent("  ")))
 	}
 
-	lastNumber := t.Issues[len(t.Issues)-1].Number
-	counter := 0
+	issueNumber := 1
 
-	for i := 1; i < lastNumber; i++ {
-		v := t.Issues[counter]
-		if i < v.Number {
-			var err error
+	for _, v := range issuesAndPulls {
+		var err error
+		// Create dummy issues between issue numbers to maintain alignment.
+		// Note: in asynchronous mode, it may not be necessary to do this, since
+		// issues could be created out of order.
+		for ; issueNumber < v.Number; issueNumber++ {
+			fmt.Printf("Creating issue #%d - Dummy for alignment ...", issueNumber)
 			if t.IsImport {
-				err = t.importIssue(ctx, t.buildImportIssueRequest(ctx, t.findPullRequest(i)))
+				err = t.importIssue(ctx, t.buildImportIssueRequest(ctx, nil))
 			} else {
-				err = t.createIssueWithComments(ctx, t.buildCreateIssueRequest(ctx, t.findPullRequest(i)))
+				err = t.createIssueWithComments(ctx, t.buildCreateIssueRequest(ctx, nil))
 			}
+			fmt.Println()
 			if err != nil {
 				return err
 			}
-			continue
 		}
-		counter++
-
-		var err error
+		// Create an issue from a real issue or a pull request
+		fmt.Printf("Creating issue #%d - %s ...", v.Number, v.Title)
 		if t.IsImport {
 			err = t.importIssue(ctx, t.buildImportIssueRequest(ctx, &v))
 		} else {
 			err = t.createIssueWithComments(ctx, t.buildCreateIssueRequest(ctx, &v))
 		}
+		fmt.Println()
 		if err != nil {
 			return err
 		}
+		issueNumber++
 	}
-
 	return nil
-}
-
-func (t *Transfer) findPullRequest(n int) *Issue {
-	counter := 0
-	found := false
-	for i, v := range t.Pulls {
-		if v.Number == n {
-			counter = i
-			found = true
-			break
-		}
-	}
-	if found == false {
-		return nil
-	}
-
-	return &t.Pulls[counter]
 }
 
 func (t *Transfer) buildImportDummyIssueRequest(tt *time.Time) *IssueImportRequest {
@@ -414,12 +402,12 @@ func (t *Transfer) buildImportIssueRequest(ctx context.Context, v *Issue) *Issue
 	for _, vv := range v.Labels.Nodes {
 		labels = append(labels, vv.Name)
 	}
-	body := bodyPrefix(v.Author.AvatarURL, v.Author.Login, nil) + t.replaceBody(v.Body)
+	body := t.bodyPrefix(v.Author.AvatarURL, v.Author.Login, nil) + t.replaceBody(v.Body)
 	var comments []*IssueImportComment
 	for _, vv := range v.Comments.Nodes {
 		comments = append(comments, &IssueImportComment{
 			CreatedAt: &vv.CreatedAt,
-			Body:      bodyPrefix(vv.Author.AvatarURL, vv.Author.Login, nil) + t.replaceBody(vv.Body),
+			Body:      t.bodyPrefix(vv.Author.AvatarURL, vv.Author.Login, nil) + t.replaceBody(vv.Body),
 		})
 	}
 
@@ -451,16 +439,53 @@ func (t *Transfer) buildImportIssueRequest(ctx context.Context, v *Issue) *Issue
 }
 
 func (t *Transfer) importIssue(ctx context.Context, input *IssueImportRequest) error {
+	if t.DryRun {
+		return nil
+	}
 	got, _, err := ImportIssue(t.DST.Client, ctx, t.DST.Owner, t.DST.Name, input)
 	if err != nil {
 		return err
 	}
 
-	number, _ := strconv.Atoi(path.Base(*got.URL))
-	fmt.Printf("requested issue import: importID %d - %s\n", number, input.IssueImport.Title)
-	//t.ImportRequested = append(t.ImportRequested, number)
+	if !t.Sync {
+		// Note: if following up on asynchronous issues is reimplemented, this should create a
+		// slice of URLs or IssueImportRequests, instead of import IDs.
+		// number, _ := strconv.Atoi(path.Base(*got.URL))
+		// fmt.Printf("requested issue import: importID %d - %s\n", number, input.IssueImport.Title)
+		// t.ImportRequested = append(t.ImportRequested, number)
+		return nil
+	}
 
-	return nil
+	// To ensure issues are created in order, create them synchronously as recommended
+	// by the Import API docs. This is slow, but safe. We poll the endpoint with a
+	// multiplicative delay, but we reset this delay after every issue.
+
+	const maxRetries = 10
+	var delayMs = 1000
+	var delayScale = 1.6
+
+	for i := 0; ; i++ {
+		switch *got.Status {
+		case "pending":
+			fmt.Printf(".")
+		case "imported":
+			fmt.Printf(" %s", *got.Status)
+			return nil
+		default:
+			fmt.Printf(" %s", *got.Status)
+			return fmt.Errorf("issue import failed: %s", repr.String(got))
+		}
+		if i >= maxRetries {
+			break
+		}
+		time.Sleep(time.Duration(delayMs) * time.Millisecond)
+		delayMs = int(float64(delayMs) * delayScale)
+		got, _, err = GetImportIssueResponse(t.DST.Client, ctx, *got.URL)
+		if err != nil {
+			return err
+		}
+	}
+	return fmt.Errorf("maximum retries exceeded")
 }
 
 func (t *Transfer) buildCreateDummyIssueRequest(tt *time.Time) *IssueAndCommentsRequest {
@@ -488,10 +513,10 @@ func (t *Transfer) buildCreateIssueRequest(ctx context.Context, v *Issue) *Issue
 	for _, vv := range v.Labels.Nodes {
 		labels = append(labels, vv.Name)
 	}
-	body := bodyPrefix(v.Author.AvatarURL, v.Author.Login, &v.CreatedAt) + t.replaceBody(v.Body)
+	body := t.bodyPrefix(v.Author.AvatarURL, v.Author.Login, &v.CreatedAt) + t.replaceBody(v.Body)
 	var comments []*github.IssueComment
 	for _, vv := range v.Comments.Nodes {
-		cBody := bodyPrefix(vv.Author.AvatarURL, vv.Author.Login, &vv.CreatedAt) + t.replaceBody(vv.Body)
+		cBody := t.bodyPrefix(vv.Author.AvatarURL, vv.Author.Login, &vv.CreatedAt) + t.replaceBody(vv.Body)
 		comments = append(comments, &github.IssueComment{
 			CreatedAt: &vv.CreatedAt,
 			Body:      &cBody,
@@ -630,10 +655,15 @@ func (t *Transfer) ShowAssignees(ctx context.Context) error {
 	return nil
 }
 
-func bodyPrefix(avatarURL string, login string, t *time.Time) string {
-	if t == nil {
-		return fmt.Sprintf("<img src=\"%s\" width=\"25\"> <b>%s</b> commented:\n\n", avatarURL, login)
+func (t *Transfer) bodyPrefix(avatarURL string, login string, tm *time.Time) string {
+	var avatarStr string
+	if !t.SkipAvatars {
+		avatarStr = fmt.Sprintf("<img src=\"%s\" width=\"25\"> ", avatarURL)
 	}
-	return fmt.Sprintf("<img src=\"%s\" width=\"25\"> <b>%s</b> commented (%s):\n\n",
-		avatarURL, login, t.Format(time.RFC822))
+
+	if tm == nil {
+		return fmt.Sprintf("%s<b>%s</b> commented:\n\n", avatarStr, login)
+	}
+	return fmt.Sprintf("%s<b>%s</b> commented (%s):\n\n",
+		avatarStr, login, tm.Format(time.RFC822))
 }
